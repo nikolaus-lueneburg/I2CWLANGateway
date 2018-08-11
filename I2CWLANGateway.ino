@@ -32,6 +32,7 @@ int O_Module_VAL[O_Module_NUM][8];   // Flag for output state
 
 const int I_Module_NUM = (sizeof(I_Module_Address) / sizeof(I_Module_Address[0]));  // Number of input modules
 byte I_Module_VAL[I_Module_NUM];  // Flag for input state
+byte I_Module_VAL_NEW[I_Module_NUM];  // Flag for input state
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Load Functions
@@ -73,7 +74,6 @@ void setup()
   // Hostname defaults to esp8266-[ChipID]
   // ArduinoOTA.setHostname("myesp8266");
 
-  // No authentication by default
   ArduinoOTA.setPassword((const char *)"1234");
   
   ArduinoOTA.onStart([]() {
@@ -98,7 +98,7 @@ void setup()
   
   ArduinoOTA.begin();
 
-  WebServer.on("/set", ArgCheck); // Handle HTTP GET command incoming
+  // WebServer.on("/set", setOutput); // Handle HTTP GET command incoming
   WebServer.on("/", handleRoot); // Handle root website
   WebServer.on("/input", handleInput); // Handle Input website
   WebServer.on("/output", handleOutput); // Handle Output website
@@ -107,7 +107,7 @@ void setup()
   Serial.println("Starting WebServer");
   WebServer.begin();
 
-  OpenLoxoneURL(LoxoneRebootURL);
+  // OpenLoxoneURL(LoxoneRebootURL);
 
   pinMode(BUILTIN_LED, OUTPUT);  // initialize onboard LED as output
   pinMode(InterruptPin, INPUT);
@@ -115,12 +115,12 @@ void setup()
   if (InterruptPin != D0)
   {
     Serial.println("Attach interrupt to Pin");
-    attachInterrupt(digitalPinToInterrupt(InterruptPin), checkInputs, RISING);
+    attachInterrupt(digitalPinToInterrupt(InterruptPin), readInputs, RISING);
   }
   
   // Initial Check of Input Modules
   Serial.println("Checking Inputs");
-  checkInputs();
+  readInputs();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -134,7 +134,199 @@ void loop()
 
   WebServer.handleClient();    // Handle incoming web requests
 
-  SoftInterrupt();
+  softInterrupt();
+
+  checkInputs();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - Webserver handling
+
+void handleRoot()
+{
+  String P_Root = P_Header() + P_Menu() + P_Footer(); 
+  WebServer.send(200, "text/html", P_Root);
+}
+
+void handleInput()
+{
+  String P_Root = P_Header() + P_Menu() + P_Input() + P_Footer(); 
+  WebServer.send(200, "text/html", P_Root);
+}
+
+void handleOutput()
+{
+  String page;
+  String message1 = "";
+  String message2 = "";
+  bool error = false;
+  bool gui = WebServer.arg("gui").toInt();
+  bool set = WebServer.arg("set").toInt();
+  int module = WebServer.arg("module").toInt();
+  int out = WebServer.arg("out").toInt();
+  bool value = WebServer.arg("value").toInt();
+
+  if (gui || set)
+  { 
+    if (set)
+    {
+      out = out-1; // Adjust out
+      
+      Serial.println("Check Parameter");
+      if (GetModuleIndex(module) == 99)
+      {
+        message2 += "<h3><font color='red'>Error module</font></h3>";
+        error = true;
+      }
+      if (out >= 8)
+      {
+        message2 += "<h3><font color='red'>Error out</font></h3>";
+        error = true;
+      }
+      if (!(value >= 0 && value <= 1))
+      {
+        message2 += "<h3><font color='red'>Error value</font></h3>";
+        error = true;
+      }
+    }
+
+    if (error)
+    {
+      message1 += "<h2><font color='red'>Error</font></h2>";
+    }
+    else
+    {    
+      message1 += "<h2><font color='green'>OK</font></h2>";
+    }
+    
+    if (!error)
+    {
+      Serial.println("SetOutput");
+      SetOutput(module,out,value);
+      delay(5);
+    }
+  }
+
+  if (set)
+  {
+    page = P_Header_Small() + message1  + message2;
+  }
+  else
+  {
+    page = P_Header() + P_Menu() + P_Output() + P_Footer();
+  }
+  WebServer.send(200, "text/html", page);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function to set Output Modul
+
+void SetOutput(int module, int out, bool value)
+{
+  byte com;
+  Wire.requestFrom(module, 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
+  while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
+  com = Wire.read();
+  bitWrite(com, out, !value);
+  Wire.endTransmission();
+  
+  Wire.beginTransmission(module);     //Begin the transmission to PCF8574 (0,0,0)
+  Wire.write(com);
+  Wire.endTransmission();         //End the Transmission
+
+  O_Module_VAL[GetModuleIndex(module)][out] = value; // Store value
+  
+  TelnetMsg("OUT | 0x" + String(module, HEX) + " | P" + String(out+1) + " | " + (value ? "ON " : "OFF")); // Send Telnet Message
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - Get Module Number (for multi array)
+
+int GetModuleIndex(int address)
+{
+  int index = 99;
+  
+  for (int i = 0; i < O_Module_NUM; i++)
+  {
+    if (address == O_Module_Address[i])
+    {
+      index = i;
+      break;
+    }
+  }
+  
+  return index;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - Send UDP
+
+void sendUDP(String text)
+{
+  UDP.beginPacket(LoxoneIP, RecipientPort);
+  UDP.print(text);
+  UDP.endPacket();
+  delay(5);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - softInterrupt
+
+void softInterrupt()
+{
+  if (InterruptPin == D0)
+  {
+    if (digitalRead(InterruptPin) == 0) // Check PIN D0
+    {
+      readInputs();
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - readInputs - Check all Input Modules
+
+void readInputs()
+{
+  for (int i = 0; i < I_Module_NUM; i++)
+  {
+    Wire.requestFrom(I_Module_Address[i], 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
+    while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
+
+    I_Module_VAL_NEW[i] = Wire.read(); // Set new input value
+  }
+}  
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - readInputs - Check all Input Modules
+
+void checkInputs()
+{
+  for (int i = 0; i < I_Module_NUM; i++)
+  {
+    if (I_Module_VAL_NEW[i] != I_Module_VAL[i])
+    {
+      for(int j = 0; j < 8; j++)
+      {
+        if (bitRead(I_Module_VAL_NEW[i], j) != bitRead(I_Module_VAL[i], j))
+        {
+          bool NewValue = bitRead(I_Module_VAL[i], j);
+          SendChange(i,j,NewValue);
+        }
+      }
+    }
+    I_Module_VAL[i] = I_Module_VAL_NEW[i]; // Store new value
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - sendChange - Send telnet and UDP message
+
+void SendChange(int module, int out, bool value)
+{
+  TelnetMsg("IN  | 0x" + String(I_Module_Address[module], HEX) + " | P" + String(out+1) + " | " + (value ? "ON " : "OFF") + " | " + I_Module_DESC[module][out] + " | UDP 020" + String(out+1) + value);
+  sendUDP("0" + String(I_Module_Address[module]) + String(out+1) + value);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -146,7 +338,7 @@ void OpenLoxoneURL(String URL)
   // configure traged server and url
   HTTPClient http;
 
-  http.begin("http://" + LoxoneIP.toString() + "/dev/sps/io" + URL);
+  http.begin("http://" + LoxoneIP.toString() + "/dev/sps/io/" + URL + "/pulse");
   http.setAuthorization(LoxoneAuthorization);
 
   // Serial.print("[HTTP] GET...\n");
@@ -171,110 +363,6 @@ void OpenLoxoneURL(String URL)
       // Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
   }
   http.end();
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-// Function - Webserver handling
-
-void handleRoot()
-{
-  String P_Root = P_Header() + P_Menu() + P_Footer(); 
-  WebServer.send(200, "text/html", P_Root);
-}
-
-void handleInput()
-{
-  String P_Root = P_Header() + P_Menu() + P_Input() + P_Footer(); 
-  WebServer.send(200, "text/html", P_Root);
-}
-
-void handleOutput()
-{
-  if (WebServer.hasArg("module"))
-  {
-    SetOutput(WebServer.arg("module").toInt(),WebServer.arg("output").toInt(),WebServer.arg("value").toInt());
-  }
-  
-  String P_Root = P_Header() + P_Menu() +  P_Output() + P_Footer(); 
-  WebServer.send(200, "text/html", P_Root);
-}
-
-void ArgCheck()
-{
-  String message = "";
-  message += "<h1 style=\"font-family:courier; text-align:center\">WLAN IR Modul</h1>";
-  
-  if (WebServer.arg("module") == "")  //Parameter not found
-  {
-    message += "Error: module Argument missing <br>";
-  }
-
-  if (WebServer.arg("output") == "")  //Parameter not found
-  {
-    message += "Error: output Argument missing<br>";
-  }
-  
-  if (WebServer.arg("command") == "")  //Parameter not found
-  {
-    message += "Error: command Argument missing<br>";
-  }
-
-  SetOutput(WebServer.arg("module").toInt(),WebServer.arg("output").toInt(),WebServer.arg("command").toInt());
-  
-  delay(5);
-  WebServer.send(200, "text/html", message);          //Returns the HTTP response
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-// Function to set Output Modul
-
-void SetOutput(int module, int output, bool value)
-{
-  byte com;
-  Wire.requestFrom(module, 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
-  while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
-  com = Wire.read();
-  bitWrite(com, output, !value);
-  Wire.endTransmission();
-  
-  Wire.beginTransmission(module);     //Begin the transmission to PCF8574 (0,0,0)
-  Wire.write(com);
-  Wire.endTransmission();         //End the Transmission
-
-  O_Module_VAL[GetModuleIndex(module)][output] = value; // Store value
-  
-  TelnetMsg("OUT | 0x" + String(module, HEX) + " | P" + String(output+1) + " | " + (value ? "ON " : "OFF")); // Send Telnet Message
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-// Function - Get Module Number (for multi array)
-
-int GetModuleIndex(int address)
-{
-  int index;
-  
-  for (int i = 0; i < O_Module_NUM; i++)
-  {
-    if (address == O_Module_Address[i])
-    {
-      index = i;
-      break;
-    }
-  }
-  
-  return index;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-// Function - Send UDP
-
-void sendUDP(String text)
-{
-    UDP.beginPacket(LoxoneIP, RecipientPort);
-    // Udp.write("Test");
-    UDP.print(text);
-    UDP.endPacket();
-    delay(5);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -303,67 +391,3 @@ void CheckWifiStatus()
     ESP.restart();
   }
 }
-
-////////////////////////////////////////////////////////////////////////////////////////
-// Function - Interrupt
-
-void SoftInterrupt()
-{
-  if (InterruptPin == D0)
-  {
-    if (digitalRead(InterruptPin) == 0) // Check PIN D0
-    {
-      checkInputs();
-    }
-  }
-}
-////////////////////////////////////////////////////////////////////////////////////////
-// Function - Check all Input Modules
-
-void checkInputs()
-{
-  for (int i = 0; i < I_Module_NUM; i++)
-  {
-    Wire.requestFrom(I_Module_Address[i], 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
-    while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
-
-      byte I_Module_VAL_OLD = I_Module_VAL[i];
-      I_Module_VAL[i] = Wire.read(); // Set new input value
-
-      if (I_Module_VAL_OLD != I_Module_VAL[i])
-      {
-        //Serial.print("Input change on module ");Serial.println(i);
-
-        for(int j = 0; j < 8; j++)
-        {
-          //Serial.print(!(bitRead(I_Module_VAL[i], j)));
-          if (bitRead(I_Module_VAL_OLD, j) != bitRead(I_Module_VAL[i], j))
-          {
-            //Serial.print("Input change on pin ");Serial.println(j);
-            
-            bool NewInputValue = bitRead(I_Module_VAL[i], j);
-            
-            //Serial.print("New value");Serial.println(NewInputValue);
-            SendChange(i,j,NewInputValue);
-          }
-        }
-      }
-/*
-      Serial.println(255 - I_Module_VAL[i]);
-      
-      for(int j = 0; j < 8; j++)
-      {
-        Serial.print(!(bitRead(I_Module_VAL[i], j)));
-      }
-      Serial.println();
-*/
-  }
-}
-
-void SendChange(int module, int port, bool value)
-{
-  TelnetMsg("IN  | 0x" + String(I_Module_Address[module], HEX) + " | P" + String(port+1) + " | " + (value ? "ON " : "OFF") + " | " + I_Module_DESC[module][port] + " | UDP 020" + String(port+1) + value);
-  sendUDP("0" + String(I_Module_Address[module]) + String(value+1) + value);
-}
-
-////////////////////////////////////////////////////////////////////////////////////////

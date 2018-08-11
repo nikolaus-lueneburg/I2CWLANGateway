@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // HTML Header
 String P_Header(){
-  String page = "<html lang='fr'><head><meta http-equiv='refresh' content='60' name='viewport' content='width=device-width, initial-scale=1'/>";
+  String page = "<html lang='de'><head><meta http-equiv='refresh' content='60' name='viewport' content='width=device-width, initial-scale=1'/>";
   page += "<link rel='stylesheet' href='https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css'><script src='https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js'></script><script src='https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js'></script>";
   page += "<title>" Sketch_Name "</title></head><body>";
   page += "<style>#button_desc { float: left; width: 100px;}</style>";
@@ -10,6 +10,11 @@ String P_Header(){
   page +=     "<div class='col-md-12'>";
   page +=       "<h1>" Sketch_Name "</h1>";
 //  page +=       "<h2>I/O Dashboard</h2>";
+  return page;
+}
+
+String P_Header_Small(){
+  String page = "<html lang='de'><head><title>" Sketch_Name "</title></head><body>";
   return page;
 }
 
@@ -133,14 +138,15 @@ String P_Output()
       // Button ON
       page +=         "<div class='col-xs-4'><form action='/output' method='POST'><input type='hidden' name='module' value='";
       page +=         String(O_Module_Address[i], DEC);
-      page +=         "'><input type='hidden' name='output' value='";
+      page +=         "'><input type='hidden' name='gui' value='1'><input type='hidden' name='out' value='";
       page +=         j;
       page +=         "'><button type='button submit' name='value' value='1' class='btn btn-success btn-lg'>ON</button></form></div>";
+
 
       // Button OFF
       page +=         "<div class='col-xs-4'><form action='/output' method='POST'><input type='hidden' name='module' value='";
       page +=         String(O_Module_Address[i], DEC);
-      page +=         "'><input type='hidden' name='output' value='";
+      page +=         "'><input type='hidden' name='gui' value='1'><input type='hidden' name='out' value='";
       page +=         j;
       page +=         "'><button type='button submit' name='value' value='0' class='btn btn-danger btn-lg'>OFF</button></form></div>";
     }
