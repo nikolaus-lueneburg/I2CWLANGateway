@@ -1,8 +1,0 @@
-1.20
--Configuration outsourced
-1.21
-- Function "Set Output" converted to use wire library
-1.22
-- Store module data in multiple array
-1.23
-- 
