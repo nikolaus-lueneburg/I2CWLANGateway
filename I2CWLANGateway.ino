@@ -1,6 +1,3 @@
-#define Sketch_Name       "I2C WLAN Gateway - Werkstatt"    // Name des Skripts
-#define Sketch_Version    "1.12"                  // Version des Skripts
-
 ////////////////////////////////////////////////////////////////////////////////////////
 // Libraries
 
@@ -13,70 +10,34 @@
 #include <ESP8266HTTPClient.h>
 #include <Wire.h>
 
+#include "configuration.h"
+
 ////////////////////////////////////////////////////////////////////////////////////////
 // Settings
 
-////////////////////////////////
-// Network
-
-// WLAN Configuration
-const char* ssid = "MYSSID";
-const char* password = "WLANSECRET";
-
-// ESP8266 IP Configuration
-IPAddress ip(192,168,1,21); // IP-Address Wemos D1
-IPAddress gateway(192,168,1,1); // IP-Address network gateway
-IPAddress subnet(255,255,255,0); // Subnetzmaske
-
-// UDP packet destination IP & Port
-IPAddress LoxoneIP(192, 168, 1, 5);
-unsigned int RecipientPort = 12345;
-
 // Telnet
-#define MAX_TELNET_CLIENTS 2
 WiFiServer TelnetServer(23); // Telnet Port
+WiFiClient TelnetClient[MAX_TELNET_CLIENTS];
+bool ConnectionEstablished; // Flag for telnet
 
 // Web-Server
 ESP8266WebServer WebServer(80); // HTTP Port
 
-////////////////////////////////
-// Input Module
-
-// Interrupt Pin (Horter I2C WLAN Modul Prototype Modul is connected to D0 - So currently no real interrupt)
-#define InterruptPin D0
-
-// 0x20
-PCF8574 PCF_20(0x20);  // Input Module with address 0x20
-
-const int Input20_INV[3] = {false,true,false}; // Invert Input
-bool Input20_VAL[3] = {0,0,0}; // Flag for input state
-const String Input20_DESC[3] = {"Taster-Licht","Bewegungsmelder","Taster-Aussen"}; // Input Description
-
-const int Input20_NUM = sizeof(Input20_VAL);
-
-////////////////////////////////
-// Output Module
-
-// 0x21
-PCF8574 PCF_21(0x21);  // Output Module with address 0x21
-
-bool Output21_VAL[4] = {0,0,0,0}; // Flag for output state
-const String Output21_DESC[4] = {"Licht","Steckdose","Ladestation","Drehstrom"}; // Output description
-
-const int Output21_NUM = sizeof(Output21_VAL);
-
-////////////////////////////////
-// Loxone
-// See function OpenLoxoneURL for further details
-
-const char* LoxoneAuthorization = "ABCDEF1234567890"; // Base64 encoded Username and Password
-const char* LoxoneRebootURL = "/21_GARAGE/pulse"; // Opens the URL after a reboot
-
-WiFiClient TelnetClient[MAX_TELNET_CLIENTS];
-bool ConnectionEstablished; // Flag for telnet
-
 // Start UDP
 WiFiUDP UDP;
+
+////////////////////////////////
+
+const int O_Module_NUM = (sizeof(O_Module_Address) / sizeof(O_Module_Address[0]));  // Number of output modules
+int O_Module_VAL[O_Module_NUM][8];   // Flag for output state
+
+const int I_Module_NUM = (sizeof(I_Module_Address) / sizeof(I_Module_Address[0]));  // Number of input modules
+byte I_Module_VAL[I_Module_NUM];  // Flag for input state
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Load Functions
+
+#include "telnet.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Setup
@@ -86,9 +47,9 @@ void setup()
   Serial.begin(115200);
   Serial.println(Sketch_Name);
   Serial.println(Sketch_Version);
-  
-  pinMode(D4, OUTPUT); 
 
+  Wire.begin();
+  
   Serial.printf("Sketch size: %u\n", ESP.getSketchSize());
   Serial.printf("Free size: %u\n", ESP.getFreeSketchSpace());
 
@@ -138,25 +99,28 @@ void setup()
   
   ArduinoOTA.begin();
 
-  // PCF8574
-  PCF_20.begin();
-  PCF_21.begin();
-
   WebServer.on("/set", ArgCheck); // Handle HTTP GET command incoming
   WebServer.on("/", handleRoot); // Handle root website
   WebServer.on("/input", handleInput); // Handle Input website
   WebServer.on("/output", handleOutput); // Handle Output website
 
   // Start the server
+  Serial.println("Starting WebServer");
   WebServer.begin();
-  Serial.println("WebServer started");
 
   OpenLoxoneURL(LoxoneRebootURL);
 
   pinMode(BUILTIN_LED, OUTPUT);  // initialize onboard LED as output
   pinMode(InterruptPin, INPUT);
 
+  if (InterruptPin != D0)
+  {
+    Serial.println("Attach interrupt to Pin");
+    attachInterrupt(digitalPinToInterrupt(InterruptPin), checkInputs, RISING);
+  }
+  
   // Initial Check of Input Modules
+  Serial.println("Checking Inputs");
   checkInputs();
 }
 
@@ -171,7 +135,7 @@ void loop()
 
   WebServer.handleClient();    // Handle incoming web requests
 
-  checkInterrupt(); // Check Interrupt
+  SoftInterrupt();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -227,9 +191,9 @@ void handleInput()
 
 void handleOutput()
 {
-  if (WebServer.hasArg("board"))
+  if (WebServer.hasArg("module"))
   {
-    SetOutput(WebServer.arg("board").toInt(),WebServer.arg("output").toInt(),WebServer.arg("value").toInt());
+    SetOutput(WebServer.arg("module").toInt(),WebServer.arg("output").toInt(),WebServer.arg("value").toInt());
   }
   
   String P_Root = P_Header() + P_Menu() +  P_Output() + P_Footer(); 
@@ -241,9 +205,9 @@ void ArgCheck()
   String message = "";
   message += "<h1 style=\"font-family:courier; text-align:center\">WLAN IR Modul</h1>";
   
-  if (WebServer.arg("board") == "")  //Parameter not found
+  if (WebServer.arg("module") == "")  //Parameter not found
   {
-    message += "Error: board Argument missing <br>";
+    message += "Error: module Argument missing <br>";
   }
 
   if (WebServer.arg("output") == "")  //Parameter not found
@@ -256,112 +220,50 @@ void ArgCheck()
     message += "Error: command Argument missing<br>";
   }
 
-  SetOutput(WebServer.arg("board").toInt(),WebServer.arg("output").toInt(),WebServer.arg("command").toInt());
+  SetOutput(WebServer.arg("module").toInt(),WebServer.arg("output").toInt(),WebServer.arg("command").toInt());
   
   delay(5);
   WebServer.send(200, "text/html", message);          //Returns the HTTP response
 }
 
-void SetOutput(int board, int output, bool value)
+////////////////////////////////////////////////////////////////////////////////////////
+// Function to set Output Modul
+
+void SetOutput(int module, int output, bool value)
 {
-  if (board == 21)
-  {
-    PCF_21.write(output, !value);
-    Output21_VAL[output] = value;
-  }
+  byte com;
+  Wire.requestFrom(module, 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
+  while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
+  com = Wire.read();
+  bitWrite(com, output, !value);
+  Wire.endTransmission();
+  
+  Wire.beginTransmission(module);     //Begin the transmission to PCF8574 (0,0,0)
+  Wire.write(com);
+  Wire.endTransmission();         //End the Transmission
 
-  TelnetMsg("OUT" + String(board) + " | P" + String(output+1) + " | " + (value ? "ON " : "OFF")); // Send Telnet Message
-
+  O_Module_VAL[GetModuleIndex(module)][output] = value; // Store value
+  
+  TelnetMsg("OUT | 0x" + String(module, HEX) + " | P" + String(output+1) + " | " + (value ? "ON " : "OFF")); // Send Telnet Message
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
-// Function - Telnet Service
+// Function - Get Module Number (for multi array)
 
-void Telnet()
+int GetModuleIndex(int address)
 {
-  // Cleanup disconnected session
-  for(int i = 0; i < MAX_TELNET_CLIENTS; i++)
+  int index;
+  
+  for (int i = 0; i < O_Module_NUM; i++)
   {
-    if (TelnetClient[i] && !TelnetClient[i].connected())
+    if (address == O_Module_Address[i])
     {
-      Serial.print("Client disconnected ... terminate session "); Serial.println(i+1); 
-      TelnetClient[i].stop();
+      index = i;
+      break;
     }
   }
   
-  // Check new client connections
-  if (TelnetServer.hasClient())
-  {
-    ConnectionEstablished = false; // Set to false
-    
-    for(int i = 0; i < MAX_TELNET_CLIENTS; i++)
-    {
-      // Serial.print("Checking telnet session "); Serial.println(i+1);
-      
-      // find free socket
-      if (!TelnetClient[i])
-      {
-        TelnetClient[i] = TelnetServer.available(); 
-        
-        Serial.print("New Telnet client connected to session "); Serial.println(i+1);
-
-        TelnetClient[i].flush();  // clear input buffer, else you get strange characters
-        TelnetClient[i].println(Sketch_Name);
-        TelnetClient[i].print("Welcome! Session #");
-        TelnetClient[i].println(i+1);
-        TelnetClient[i].print("Version: ");
-        TelnetClient[i].println(Sketch_Version);
-        TelnetClient[i].print("Free Heap RAM: ");
-        TelnetClient[i].println(ESP.getFreeHeap());
-        TelnetClient[i].println("----------------------------------------------------------------");
-        
-        ConnectionEstablished = true; 
-        
-        break;
-      }
-      else
-      {
-        // Serial.println("Session is in use");
-      }
-    }
-
-    if (ConnectionEstablished == false)
-    {
-      Serial.println("No free sessions ... drop connection");
-      TelnetServer.available().stop();
-      // TelnetMsg("An other user cannot connect ... MAX_TELNET_CLIENTS limit is reached!");
-    }
-  }
-
-  for(int i = 0; i < MAX_TELNET_CLIENTS; i++)
-  {
-    if (TelnetClient[i] && TelnetClient[i].connected())
-    {
-      if(TelnetClient[i].available())
-      { 
-        //get data from the telnet client
-        while(TelnetClient[i].available())
-        {
-          Serial.write(TelnetClient[i].read());
-        }
-      }
-    }
-  }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-// Function - Telnet Message
-
-void TelnetMsg(String text)
-{
-  for(int i = 0; i < MAX_TELNET_CLIENTS; i++)
-  {
-    if (TelnetClient[i] || TelnetClient[i].connected())
-    {
-      TelnetClient[i].println(text);
-    }
-  }
-  delay(10);  // to avoid strange characters left in buffer  
+  return index;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -373,7 +275,7 @@ void sendUDP(String text)
     // Udp.write("Test");
     UDP.print(text);
     UDP.endPacket();
-    delay(10);
+    delay(5);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -404,52 +306,65 @@ void CheckWifiStatus()
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
-// Function - Check Interrupt
+// Function - Interrupt
 
-void checkInterrupt()
+void SoftInterrupt()
 {
-  if (digitalRead(InterruptPin) == 0) // Check PIN D0
+  if (InterruptPin == D0)
   {
-    TelnetMsg("INTERRUPT"); 
-    checkInputs(); // Check all Input Modules
+    if (digitalRead(InterruptPin) == 0) // Check PIN D0
+    {
+      checkInputs();
+    }
   }
 }
-
 ////////////////////////////////////////////////////////////////////////////////////////
-// Function - Check Input Modules
+// Function - Check all Input Modules
 
-void checkInputs() // Add aditional Input Modules
+void checkInputs()
 {
-  check20();
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-// Function - Check Input Module 0x20
-
-void check20()
-{
-  for(int i = 0; i < Input20_NUM; i++)
+  for (int i = 0; i < I_Module_NUM; i++)
   {
-    if(!PCF_20.readButton(i))
-    {
-      if(Input20_VAL[i] == 0)
+    Wire.requestFrom(I_Module_Address[i], 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
+    while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
+
+      byte I_Module_VAL_OLD = I_Module_VAL[i];
+      I_Module_VAL[i] = Wire.read(); // Set new input value
+
+      if (I_Module_VAL_OLD != I_Module_VAL[i])
       {
-        Input20_VAL[i] = 1;
-        send20(i);
+        //Serial.print("Input change on module ");Serial.println(i);
+
+        for(int j = 0; j < 8; j++)
+        {
+          //Serial.print(!(bitRead(I_Module_VAL[i], j)));
+          if (bitRead(I_Module_VAL_OLD, j) != bitRead(I_Module_VAL[i], j))
+          {
+            //Serial.print("Input change on pin ");Serial.println(j);
+            
+            bool NewInputValue = bitRead(I_Module_VAL[i], j);
+            
+            //Serial.print("New value");Serial.println(NewInputValue);
+            SendChange(i,j,NewInputValue);
+          }
+        }
       }
-    }
-    else if (Input20_VAL[i] == 1)
-    {
-      Input20_VAL[i] = 0;
-      send20(i);
-    }
+/*
+      Serial.println(255 - I_Module_VAL[i]);
+      
+      for(int j = 0; j < 8; j++)
+      {
+        Serial.print(!(bitRead(I_Module_VAL[i], j)));
+      }
+      Serial.println();
+*/
   }
 }
 
-void send20(int input)
+void SendChange(int module, int port, bool value)
 {
-  TelnetMsg("IN20-" + String(input+1) + " | " + (Input20_VAL[input] ? "ON " : "OFF") + " | " + Input20_DESC[input] + " | UDP 020" + String(input+1) + Input20_VAL[input]);
-  sendUDP("020" + String(input+1) + Input20_VAL[input]);
+  TelnetMsg("IN  | 0x" + String(I_Module_Address[module], HEX) + " | P" + String(port+1) + " | " + (value ? "ON " : "OFF") + " | " + I_Module_DESC[module][port] + " | UDP 020" + String(port+1) + value);
+  sendUDP("0" + String(I_Module_Address[module]) + String(value+1) + value);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
