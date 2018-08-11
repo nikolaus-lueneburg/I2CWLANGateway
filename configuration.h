@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Sketch
 #define Sketch_Name       "I2C WLAN Gateway - Test"    // Name des Skripts
-#define Sketch_Version    "1.26"                  // Version des Skripts
+#define Sketch_Version    "1.29"                  // Version des Skripts
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Network
@@ -34,7 +34,12 @@ const int InterruptPin = D0;
 // See function OpenLoxoneURL for further details
 
 const char* LoxoneAuthorization = "ABCDEF1234567890"; // Base64 encoded Username and Password
-const char* LoxoneRebootURL = "/21_GARAGE/pulse"; // Opens the URL after a reboot
+const char* LoxoneRebootURL = "21_GARAGE"; // Opens the URL after a reboot
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+// HTML Configuration
+
+bool show_empty = false; // Show not definded ports in HTML view
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Output Module Configuration
@@ -61,11 +66,3 @@ const bool I_Module_INV[][8] = // Invert Input
 {
   {false,true,false,false,false,false,false,true}
 };
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-// HTML Configuration
-
-bool show_empty = false; // Show not definded ports in HTML view
-
-
-
