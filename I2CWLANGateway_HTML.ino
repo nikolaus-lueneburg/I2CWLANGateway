@@ -1,3 +1,9 @@
+/*
+ * Version: 1.31
+ * Author: Stefan Nikolaus
+ * Blog: www.nikolaus-lueneburg.de
+ */
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // HTML Header
 String P_Header(){
@@ -39,39 +45,37 @@ String P_Menu(){
 
 String P_Input()
 {
+  
   String page = "<!-- Start Input Loop -->";
   
   for(int i = 0; i < I_Module_NUM; i++)
   {
-    page +=         "<h3>Output Module 0x";
+    page +=         "<h3>Input Module 0x";
     page +=         String(I_Module_Address[i], HEX);
     page +=         "</h3><div class='row'>";
     
     for(int j = 0; j < 8; j++)
     {
       bool value = bitRead(I_Module_VAL[i], j); // Load value for button
-     
-      if (I_Module_DESC[i][j].length() == 0) // Check if descripton is empty
+      bool empty_DESC = I_Module_DESC[i][j].length() == 0; // Check if descripton is empty
+      
+      if (!show_empty && empty_DESC)
       {
-        if (show_empty)
-        {
-          page +=         "<div class='col-xs-4'><h4 class ='text-left'>";
-          page +=         j+1;
-          page +=         " - Not defined</h4></div>";
-        }
-        else
-        {
-          continue; // Nothing to show, jump to the next in loop
-        }
+        continue; // Nothing to show, jump to the next in loop
       }
       else
       {
         page +=         "<div class='col-xs-4'><h4 class ='text-left'>";
         page +=         j+1;
         page +=         " - ";
-        page +=         I_Module_DESC[i][j];
-        page +=         (I_Module_INV[i][j]  ? " [INV]" : "");
-        page +=         "</h4></div>";
+        page +=         empty_DESC ? " - Not defined" : I_Module_DESC[i][j];
+/*
+        page +=         "   <span class='badge'>";
+        page +=         (I_Module_INV[i][j] ? value : !value) ? "ON" : "OFF";
+        page +=         "</span>";
+*/
+        page +=         (I_Module_INV[i][j]  ? "<span class='badge'>INV</span>" : "");        
+        page +=         "</span></h4></div>";
       }
       
       if (I_Module_INV[i][j] ? value : !value)
@@ -108,37 +112,27 @@ String P_Output()
     
     for(int j = 0; j < 8; j++)
     {
-      if (O_Module_DESC[i][j].length() == 0)
+      bool empty_DESC = O_Module_DESC[i][j].length() == 0; // Check if descripton is empty
+      
+      if (!show_empty && empty_DESC)
       {
-        if (show_empty)
-        {
-        page +=         "<div class='col-xs-4'><h4 class ='text-left'>";
-        page +=         j+1;
-        page +=         " - Not defined";
-        page +=         "   <span class='badge'>";
-        page +=         (O_Module_VAL[i][j] ? "ON" : "OFF");
-        page +=         "</span></h4></div>";
-        }
-        else
-        {
-          continue; // Nothing to show, jump to the next in loop
-        }
+        continue; // Nothing to show, jump to the next in loop
       }
       else
       {
         page +=         "<div class='col-xs-4'><h4 class ='text-left'>";
         page +=         j+1;
         page +=         " - ";
-        page +=         O_Module_DESC[i][j];
+        page +=         empty_DESC ? " - Not defined" : O_Module_DESC[i][j];
         page +=         "   <span class='badge'>";
         page +=         (O_Module_VAL[i][j] ? "ON" : "OFF");
         page +=         "</span></h4></div>";
-      }
-      
+      }      
+
       // Button ON
       page +=         "<div class='col-xs-4'><form action='/output' method='POST'><input type='hidden' name='module' value='";
       page +=         String(O_Module_Address[i], DEC);
-      page +=         "'><input type='hidden' name='gui' value='1'><input type='hidden' name='out' value='";
+      page +=         "'><input type='hidden' name='set' value='1'><input type='hidden' name='out' value='";
       page +=         j;
       page +=         "'><button type='button submit' name='value' value='1' class='btn btn-success btn-lg'>ON</button></form></div>";
 
@@ -146,7 +140,7 @@ String P_Output()
       // Button OFF
       page +=         "<div class='col-xs-4'><form action='/output' method='POST'><input type='hidden' name='module' value='";
       page +=         String(O_Module_Address[i], DEC);
-      page +=         "'><input type='hidden' name='gui' value='1'><input type='hidden' name='out' value='";
+      page +=         "'><input type='hidden' name='set' value='1'><input type='hidden' name='out' value='";
       page +=         j;
       page +=         "'><button type='button submit' name='value' value='0' class='btn btn-danger btn-lg'>OFF</button></form></div>";
     }

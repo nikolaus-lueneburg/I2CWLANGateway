@@ -1,4 +1,10 @@
-////////////////////////////////////////////////////////////////////////////////////////
+/*
+ * Version: 1.31
+ * Author: Stefan Nikolaus
+ * Blog: www.nikolaus-lueneburg.de
+ */
+
+///////////////////////////////////////////////////////////////////////////////////////
 // Libraries
 
 #include <ESP8266WiFi.h>
@@ -25,6 +31,8 @@ ESP8266WebServer WebServer(80); // HTTP Port
 // Start UDP
 WiFiUDP UDP;
 
+char incomingPacket[255];  // buffer for incoming packets
+
 ////////////////////////////////
 
 const int O_Module_NUM = (sizeof(O_Module_Address) / sizeof(O_Module_Address[0]));  // Number of output modules
@@ -49,12 +57,15 @@ void setup()
   Serial.println(Sketch_Version);
 
   Wire.begin();
-  
+
   Serial.printf("Sketch size: %u\n", ESP.getSketchSize());
   Serial.printf("Free size: %u\n", ESP.getFreeSketchSpace());
 
   WiFi.mode(WIFI_STA);
-  WiFi.config(ip, gateway, subnet); // auskommentieren, falls eine dynamische IP bezogen werden soll
+  if (EnableStaticIP)
+  {
+    WiFi.config(ip, gateway, subnet);
+  }
   WiFi.begin(ssid, password);
 
   CheckWifiStatus();
@@ -72,9 +83,9 @@ void setup()
   // ArduinoOTA.setPort(8266);
 
   // Hostname defaults to esp8266-[ChipID]
-  // ArduinoOTA.setHostname("myesp8266");
+  ArduinoOTA.setHostname(OTAHostname);
 
-  ArduinoOTA.setPassword((const char *)"1234");
+  ArduinoOTA.setPassword(OTAPassword);
   
   ArduinoOTA.onStart([]() {
     Serial.println("Start");
@@ -97,15 +108,20 @@ void setup()
   });
   
   ArduinoOTA.begin();
-
-  // WebServer.on("/set", setOutput); // Handle HTTP GET command incoming
+  
   WebServer.on("/", handleRoot); // Handle root website
   WebServer.on("/input", handleInput); // Handle Input website
   WebServer.on("/output", handleOutput); // Handle Output website
+  WebServer.on("/set", setOutput); // Handle HTTP GET command incoming
+  WebServer.onNotFound(handleNotFound); // When a client requests an unknown URI
 
   // Start the server
   Serial.println("Starting WebServer");
   WebServer.begin();
+
+  // Start UDP listener
+  UDP.begin(localUdpPort);
+  Serial.printf("Now listening at IP %s, UDP port %d\n", WiFi.localIP().toString().c_str(), localUdpPort);
 
   // OpenLoxoneURL(LoxoneRebootURL);
 
@@ -117,9 +133,12 @@ void setup()
     Serial.println("Attach interrupt to Pin");
     attachInterrupt(digitalPinToInterrupt(InterruptPin), readInputs, RISING);
   }
-  
+
   // Initial Check of Input Modules
   Serial.println("Checking Inputs");
+
+  // I2CScan();
+
   readInputs();
 }
 
@@ -134,13 +153,23 @@ void loop()
 
   WebServer.handleClient();    // Handle incoming web requests
 
+  // Invokes the "read Input" function if software interrupt is used
   softInterrupt();
 
+  // Checks for changes on the input modules
   checkInputs();
+
+  // looks for new UDP packages
+  receiveUDP();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Function - Webserver handling
+
+void handleNotFound()
+{
+  WebServer.send(404, "text/plain", "404: Page not found");
+}
 
 void handleRoot()
 {
@@ -160,61 +189,86 @@ void handleOutput()
   String message1 = "";
   String message2 = "";
   bool error = false;
-  bool gui = WebServer.arg("gui").toInt();
   bool set = WebServer.arg("set").toInt();
   int module = WebServer.arg("module").toInt();
   int out = WebServer.arg("out").toInt();
   bool value = WebServer.arg("value").toInt();
 
-  if (gui || set)
-  { 
-    if (set)
-    {
-      out = out-1; // Adjust out
-      
-      Serial.println("Check Parameter");
-      if (GetModuleIndex(module) == 99)
-      {
-        message2 += "<h3><font color='red'>Error module</font></h3>";
-        error = true;
-      }
-      if (out >= 8)
-      {
-        message2 += "<h3><font color='red'>Error out</font></h3>";
-        error = true;
-      }
-      if (!(value >= 0 && value <= 1))
-      {
-        message2 += "<h3><font color='red'>Error value</font></h3>";
-        error = true;
-      }
-    }
-
-    if (error)
-    {
-      message1 += "<h2><font color='red'>Error</font></h2>";
-    }
-    else
-    {    
-      message1 += "<h2><font color='green'>OK</font></h2>";
-    }
-    
-    if (!error)
-    {
-      Serial.println("SetOutput");
-      SetOutput(module,out,value);
-      delay(5);
-    }
-  }
-
   if (set)
   {
-    page = P_Header_Small() + message1  + message2;
+    SetOutput(module,out,value);
+    delay(5);
+  }
+
+  page = P_Header() + P_Menu() + P_Output() + P_Footer();
+    
+  WebServer.send(200, "text/html", page);
+}
+
+void setOutput()
+{
+  String page;
+  String message1 = "";
+  String message2 = "";
+  bool error = false;
+  int module;
+  int out = WebServer.arg("out").toInt();
+  bool value = WebServer.arg("value").toInt();
+
+TelnetMsg((WebServer.arg("module"))); // Send Telnet Message
+
+if (WebServer.arg("module").startsWith("0x"))
+{
+  module = (int) strtol( &(WebServer.arg("module"))[2], NULL, 16);
+}
+else
+{
+  module = WebServer.arg("module").toInt();
+}
+
+  // Check "module"
+  if (GetModuleIndex(module) == 99)
+  {
+    message2 += "<h3><font color='red'>Error: Module not found</font></h3>";
+    error = true;
   }
   else
   {
-    page = P_Header() + P_Menu() + P_Output() + P_Footer();
+/*    
+    message2 += "Module HEX 0x";
+    message2 += String (module, HEX);  
+    message2 += " - DEC ";
+    message2 += module;
+*/
   }
+
+  // Check "out"
+  out = out-1; // Adjust out to 0-7
+  if (out > 7)
+  {
+    message2 += "<h3><font color='red'>Error: Variable 'out' is out of range</font></h3>";
+    error = true;
+  }
+
+  // Check "value"
+  if (!(value >= 0 && value <= 1))
+  {
+    message2 += "<h3><font color='red'>Error: Variable value must be 0 or 1</font></h3>";
+    error = true;
+  }
+
+  if (error)
+  {
+    message1 += "<h2><font color='red'>Error</font></h2>";
+  }
+  else
+  {    
+    message1 += "<h2><font color='green'>OK</font></h2>";
+    SetOutput(module,out,value);
+  }
+  delay(5);
+  
+  page = P_Header_Small() + message1  + message2;
   WebServer.send(200, "text/html", page);
 }
 
@@ -225,6 +279,9 @@ void handleOutput()
 void SetOutput(int module, int out, bool value)
 {
   byte com;
+  
+  Serial.println("SetOutput");
+  
   Wire.requestFrom(module, 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
   while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
   com = Wire.read();
@@ -271,6 +328,79 @@ void sendUDP(String text)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
+// Function - Receive UDP
+
+void receiveUDP()
+{
+  bool error = false;
+  
+  int packetSize = UDP.parsePacket();
+  if (packetSize)
+  {
+    // receive incoming UDP packets
+    Serial.printf("Received %d bytes from %s, port %d\n", packetSize, UDP.remoteIP().toString().c_str(), UDP.remotePort());
+    int len = UDP.read(incomingPacket, 255);
+    TelnetMsg(String(len));
+    if (len > 0)
+    {
+      incomingPacket[len] = 0;
+    }
+    Serial.printf("UDP packet contents: %s\n", incomingPacket);
+
+    String incoming = String (incomingPacket);
+    int module = (int) strtol( &incoming.substring(1,3)[0], NULL, 16);
+    // int module = incoming.substring(1,3).toInt(); // Switch to use DEC instead of HEX I2C address
+    int out = incoming.substring(3,4).toInt();
+    int value = incoming.substring(4,5).toInt();
+
+    // Check "module"
+    if (GetModuleIndex(module) == 99)
+    {
+      error = true;
+    }
+
+    // Check "out"
+    out = out-1; // Adjust out to 0-7
+    if (out > 7)
+    {
+      error = true;
+    }
+
+    // Check "value"
+    if (!(value >= 0 && value <= 1))
+    {
+      error = true;
+    }
+    
+    if (error)
+    {
+      TelnetMsg("UDP Error");
+    }
+    else
+    {    
+      SetOutput(module,out,value);
+    }
+
+    if (replyUDP)
+    {
+      // send back a reply, to the IP address and port we got the packet from
+      UDP.beginPacket(UDP.remoteIP(), UDP.remotePort());
+      UDP.write(replyPacket);
+      UDP.endPacket();
+    }
+  }
+}
+
+/*
+int PartOfArray(char text)
+{
+  for (int i = 0 ; i < 5 ; i++) incomingPacket[i] = items[i];
+  test[5] = '\0';
+  
+  return index;
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////
 // Function - softInterrupt
 
 void softInterrupt()
@@ -296,7 +426,7 @@ void readInputs()
 
     I_Module_VAL_NEW[i] = Wire.read(); // Set new input value
   }
-}  
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Function - readInputs - Check all Input Modules
@@ -326,7 +456,7 @@ void checkInputs()
 void SendChange(int module, int out, bool value)
 {
   TelnetMsg("IN  | 0x" + String(I_Module_Address[module], HEX) + " | P" + String(out+1) + " | " + (value ? "ON " : "OFF") + " | " + I_Module_DESC[module][out] + " | UDP 020" + String(out+1) + value);
-  sendUDP("0" + String(I_Module_Address[module]) + String(out+1) + value);
+  sendUDP("0" + String(I_Module_Address[module], HEX) + String(out+1) + value);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -389,5 +519,52 @@ void CheckWifiStatus()
     digitalWrite(D4, 1);
     delay(5000);
     ESP.restart();
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - I2C Scanner
+
+void I2CScan()
+{
+  byte error, address;
+  int nDevices;
+
+  Serial.println("Scanning...");
+
+  nDevices = 0;
+  for (address = 1; address < 127; address++)
+  {
+    // The i2c scanner uses the return value of
+    // the Write.endTransmisstion to see if
+    // a device did acknowledge to the address.
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+
+    if (error == 0)
+    {
+      Serial.print("I2C device found at address 0x");
+      if (address < 16) {
+        Serial.print("0");
+      }
+      Serial.print(address, HEX);
+      Serial.println(" !");
+
+      nDevices++;
+    }
+    else if (error == 4)
+    {
+      Serial.print("Unknown error at address 0x");
+      if (address < 16) {
+        Serial.print("0");
+      }
+      Serial.println(address, HEX);
+    }
+  }
+  if (nDevices == 0) {
+    Serial.println("No I2C devices found\n");
+  }
+  else {
+    Serial.println("Done!");
   }
 }

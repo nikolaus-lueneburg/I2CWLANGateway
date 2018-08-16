@@ -1,3 +1,9 @@
+/*
+ * Version: 1.31
+ * Author: Stefan Nikolaus
+ * Blog: www.nikolaus-lueneburg.de
+ */
+
 ////////////////////////////////////////////////////////////////////////////////////////
 // Function - Telnet Service
 
