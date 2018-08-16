@@ -17,22 +17,26 @@ For further details visit www.nikolaus-lueneburg.de
 ------------------------------------------------
 Example: To change output 3 to ON on module with HEX 0x21 or DEC 33
 
-- HTTP API
+-- HTTP API
+
 http://<ESP_IP>/set?module=0x21&out=3&value=1
+
 or 
+
 http://<ESP_IP>/set?module=33&out=3&value=1
 
-- UDP
+-- UDP
+
 Send UDP value ==> 02131
-021 - 3 - 1
 
 # Input Module
 ------------------------------------------------
 Example: Output 2 changes from 0 to 1 on module with HEX 0x20 or DEC 32
 
-- HTTP API
+-- HTTP API
+
 Coming soon
 
-- UDP
+-- UDP
+
 I2CWLANGateway send value ==> 02021
-020 - 2 - 1
