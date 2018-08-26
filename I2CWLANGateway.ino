@@ -1,5 +1,5 @@
 /*
- * Version: 1.31
+ * Version: 1.33
  * Author: Stefan Nikolaus
  * Blog: www.nikolaus-lueneburg.de
  */
@@ -123,7 +123,7 @@ void setup()
   UDP.begin(localUdpPort);
   Serial.printf("Now listening at IP %s, UDP port %d\n", WiFi.localIP().toString().c_str(), localUdpPort);
 
-  // OpenLoxoneURL(LoxoneRebootURL);
+  // sendHTTPGet(LoxoneRebootURL);
 
   pinMode(BUILTIN_LED, OUTPUT);  // initialize onboard LED as output
   pinMode(InterruptPin, INPUT);
@@ -140,6 +140,8 @@ void setup()
   // I2CScan();
 
   readInputs();
+
+  updateOutput();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -161,6 +163,8 @@ void loop()
 
   // looks for new UDP packages
   receiveUDP();
+
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -274,23 +278,45 @@ else
 
 
 ////////////////////////////////////////////////////////////////////////////////////////
+// Function - Read Module (Input & Output Module)
+
+byte readModule(int module)
+{
+  Wire.requestFrom(module, 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
+  while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
+  byte value = Wire.read();
+  return value;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - Update Output Module
+
+void updateOutput()
+{
+  for (int i = 0; i < O_Module_NUM; i++)
+  {
+    byte value = readModule(O_Module_Address[i]);
+    for(int j = 0; j < 8; j++)
+    {
+      O_Module_VAL[i][j] = !bitRead(value, j);
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
 // Function to set Output Modul
 
 void SetOutput(int module, int out, bool value)
 {
-  byte com;
+  TelnetMsg("SetOutput");
   
-  Serial.println("SetOutput");
+  byte com = readModule(module);
   
-  Wire.requestFrom(module, 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
-  while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
-  com = Wire.read();
-  bitWrite(com, out, !value);
-  Wire.endTransmission();
+  bitWrite(com, out, !value); // Change bit value
   
-  Wire.beginTransmission(module);     //Begin the transmission to PCF8574 (0,0,0)
-  Wire.write(com);
-  Wire.endTransmission();         //End the Transmission
+  Wire.beginTransmission(module); // Begin the transmission to PCF8574
+  Wire.write(com); // Write new value
+  Wire.endTransmission(); // End the Transmission
 
   O_Module_VAL[GetModuleIndex(module)][out] = value; // Store value
   
@@ -312,8 +338,7 @@ int GetModuleIndex(int address)
       break;
     }
   }
-  
-  return index;
+  return index; // if return value 99 the module cannout be found
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -345,9 +370,18 @@ void receiveUDP()
     {
       incomingPacket[len] = 0;
     }
+    
     Serial.printf("UDP packet contents: %s\n", incomingPacket);
 
-    String incoming = String (incomingPacket);
+    String incoming = incomingPacket;
+
+    if (incoming == "99999")
+    {
+      TelnetMsg("Rebooting...");
+      delay(2000);
+      ESP.restart();
+    }
+
     int module = (int) strtol( &incoming.substring(1,3)[0], NULL, 16);
     // int module = incoming.substring(1,3).toInt(); // Switch to use DEC instead of HEX I2C address
     int out = incoming.substring(3,4).toInt();
@@ -421,10 +455,7 @@ void readInputs()
 {
   for (int i = 0; i < I_Module_NUM; i++)
   {
-    Wire.requestFrom(I_Module_Address[i], 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
-    while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
-
-    I_Module_VAL_NEW[i] = Wire.read(); // Set new input value
+    I_Module_VAL_NEW[i] = readModule(I_Module_Address[i]);
   }
 }
 
@@ -435,7 +466,7 @@ void checkInputs()
 {
   for (int i = 0; i < I_Module_NUM; i++)
   {
-    if (I_Module_VAL_NEW[i] != I_Module_VAL[i])
+    if (I_Module_VAL[i] != I_Module_VAL_NEW[i])
     {
       for(int j = 0; j < 8; j++)
       {
@@ -445,8 +476,8 @@ void checkInputs()
           SendChange(i,j,NewValue);
         }
       }
+      I_Module_VAL[i] = I_Module_VAL_NEW[i]; // Store new value
     }
-    I_Module_VAL[i] = I_Module_VAL_NEW[i]; // Store new value
   }
 }
 
@@ -460,9 +491,9 @@ void SendChange(int module, int out, bool value)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
-// Function - Open Loxone URL
+// Function - Send HTTP Get to URL
 
-void OpenLoxoneURL(String URL)
+void sendHTTPGet(IPAddress IP, String URL)
 {
   // Serial.print("[HTTP] begin...\n");
   // configure traged server and url
