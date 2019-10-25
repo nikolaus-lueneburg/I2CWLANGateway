@@ -1,5 +1,5 @@
 /*
- * Version: 1.31
+ * Version: 1.4
  * Author: Stefan Nikolaus
  * Blog: www.nikolaus-lueneburg.de
  */
@@ -77,19 +77,4 @@ void Telnet()
       }
     }
   }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-// Function - Telnet Message
-
-void TelnetMsg(String text)
-{
-  for(int i = 0; i < MAX_TELNET_CLIENTS; i++)
-  {
-    if (TelnetClient[i] || TelnetClient[i].connected())
-    {
-      TelnetClient[i].println(text);
-    }
-  }
-  delay(5);  // to avoid strange characters left in buffer  
 }

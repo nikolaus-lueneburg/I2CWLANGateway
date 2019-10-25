@@ -1,13 +1,13 @@
 /*
- * Version: 1.31
+ * Version: 1.4
  * Author: Stefan Nikolaus
  * Blog: www.nikolaus-lueneburg.de
  */
- 
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Sketch
 #define Sketch_Name       "I2C WLAN Gateway - Test"    // Name des Skripts
-#define Sketch_Version    "1.31"                  // Version des Skripts
+#define Sketch_Version    "1.4"                  // Version des Skripts
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Network
@@ -28,21 +28,21 @@ IPAddress subnet(255,255,255,0); // Subnetzmaske
 const char* OTAPassword = "1234"; 
 const char* OTAHostname = "ESP-Test";
 
+// Telnet
+#define MAX_TELNET_CLIENTS 2
+
 // UDP packet destination IP & Port
 IPAddress LoxoneIP(192, 168, 1, 5);
 const unsigned int RecipientPort = 12345;
 
-// Telnet
-#define MAX_TELNET_CLIENTS 2
-
-// UDP
+// UDP Settings
 const unsigned int localUdpPort = 8000;  // local port to listen on
-bool replyUDP = true;
-char  replyPacket[] = "OK";  // a reply string to send back
+const bool replyUDP = true;
+const char  replyPacket[] = "OK";  // a reply string to send back
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Interrupt Pin
-#define InterruptPin  D0
+#define InterruptPin D0
 
 // Horter I2C WLAN Modul Prototype - fixed to D0 (Software Interrupt)
 // Horter I2C WLAN Modul Final Version - Change with jumper to D0 D3 D4 D8
@@ -51,13 +51,19 @@ char  replyPacket[] = "OK";  // a reply string to send back
 // Loxone
 // See function OpenLoxoneURL for further details
 
-const char* LoxoneAuthorization = "ABCDEF1234567890"; // Base64 encoded Username and Password
-const char* LoxoneRebootURL = "21_GARAGE"; // Opens the URL after a reboot
+const char* LoxoneAuthorization = "YWRtaW46UmljaHRmZXN0"; // Base64 encoded Username and Password
+const char* LoxoneRebootURL = "ESP8266_176"; // Opens the URL after a reboot
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // HTML Configuration
 
-const bool show_empty = false; // If false, hide not definded ports in HTML view
+const bool show_empty = true; // If false, hide not definded ports in HTML view
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Logging
+
+const bool loggingEnabled = true; // If true, HTML log was activated
+const byte logLength = 10;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Output Module Configuration
