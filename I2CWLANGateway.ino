@@ -1,5 +1,5 @@
 /*
- * Version: 1.33
+ * Version: 1.4
  * Author: Stefan Nikolaus
  * Blog: www.nikolaus-lueneburg.de
  */
@@ -32,6 +32,10 @@ ESP8266WebServer WebServer(80); // HTTP Port
 WiFiUDP UDP;
 
 char incomingPacket[255];  // buffer for incoming packets
+
+// Logging
+String loggingArray[logLength] = {};
+byte logPointer = 0;
 
 ////////////////////////////////
 
@@ -109,11 +113,13 @@ void setup()
   
   ArduinoOTA.begin();
   
-  WebServer.on("/", handleRoot); // Handle root website
-  WebServer.on("/input", handleInput); // Handle Input website
-  WebServer.on("/output", handleOutput); // Handle Output website
-  WebServer.on("/set", setOutput); // Handle HTTP GET command incoming
-  WebServer.onNotFound(handleNotFound); // When a client requests an unknown URI
+  WebServer.on("/", httpHandleRoot); // Handle root website
+  WebServer.on("/input", httpHandleInput); // Handle Input website
+  WebServer.on("/output", httpHandleOutput); // Handle Output website
+  WebServer.on("/status", httpHandleStatus); // Handle Status website  
+  WebServer.on("/set", httpHandleSet); // Handle incoming (HTTP GET) set command
+  WebServer.on("/get", httpHandleGet); // Handle incoming (HTTP GET) get command  
+  WebServer.onNotFound(httpHandleNotFound); // When a client requests an unknown URI
 
   // Start the server
   Serial.println("Starting WebServer");
@@ -137,11 +143,14 @@ void setup()
   // Initial Check of Input Modules
   Serial.println("Checking Inputs");
 
-  // I2CScan();
+  I2CScan();
 
   readInputs();
 
   updateOutput();
+
+LogMsg("Startup completed");
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -164,32 +173,65 @@ void loop()
   // looks for new UDP packages
   receiveUDP();
 
-
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Function - Webserver handling
 
-void handleNotFound()
+void httpHandleNotFound()
 {
   WebServer.send(404, "text/plain", "404: Page not found");
 }
 
-void handleRoot()
+void httpHandleRoot()
 {
-  String P_Root = P_Header() + P_Menu() + P_Footer(); 
+  String P_Root = P_Header() + P_Menu() + P_Favorite() + P_Footer(); 
   WebServer.send(200, "text/html", P_Root);
 }
 
-void handleInput()
+void httpHandleInput()
 {
   String P_Root = P_Header() + P_Menu() + P_Input() + P_Footer(); 
   WebServer.send(200, "text/html", P_Root);
 }
+/*
+unsigned int hexToDec(String hexString) {
+  
+  unsigned int decValue = 0;
+  int nextInt;
+  
+  for (int i = 0; i < hexString.length(); i++) {
+    
+    nextInt = int(hexString.charAt(i));
+    if (nextInt >= 48 && nextInt <= 57) nextInt = map(nextInt, 48, 57, 0, 9);
+    if (nextInt >= 65 && nextInt <= 70) nextInt = map(nextInt, 65, 70, 10, 15);
+    if (nextInt >= 97 && nextInt <= 102) nextInt = map(nextInt, 97, 102, 10, 15);
+    nextInt = constrain(nextInt, 0, 15);
+    
+    decValue = (decValue * 16) + nextInt;
+  }
+  
+  return decValue;
+}
+*/
 
-void handleOutput()
+unsigned int hexToDec(String hexString) {
+    unsigned int decValue = 0;
+    for(int i=0, n=hexString.length(); i!=n; ++i) {
+        char ch = hexString[i];
+        int val = 0;
+        if('0'<=ch && ch<='9')      val = ch - '0';
+        else if('a'<=ch && ch<='f') val = ch - 'a' + 10;
+        else if('A'<=ch && ch<='F') val = ch - 'A' + 10;
+        else continue; // skip non-hex characters
+        decValue = (decValue*16) + val;
+    }
+    return decValue;
+}
+
+void httpHandleOutput()
 {
-  String page;
+  String htmlHead;
   String message1 = "";
   String message2 = "";
   bool error = false;
@@ -204,41 +246,63 @@ void handleOutput()
     delay(5);
   }
 
-  page = P_Header() + P_Menu() + P_Output() + P_Footer();
-    
-  WebServer.send(200, "text/html", page);
+  htmlHead= P_Header() + P_Menu();
+  // htmlHead= P_Header() + P_Menu() + P_Output() + P_Footer();
+  
+  WebServer.setContentLength(htmlHead.length() + P_Output().length() + P_Footer().length());
+  WebServer.send(200,"text/html",htmlHead);
+  WebServer.sendContent(P_Output());
+  WebServer.sendContent(P_Footer());
+
+  //WebServer.send(200, "text/html", page);
 }
 
-void setOutput()
+void httpHandleStatus()
+{
+  String httpHandleStatus = P_Header() + P_Menu() + P_Status() + P_Footer(); 
+  WebServer.send(200, "text/html", httpHandleStatus);
+}
+
+void httpHandleGet() // Not implemented yet
+{
+  WebServer.send(404, "text/plain", "404: Page not found");
+}
+
+void httpHandleSet()
 {
   String page;
   String message1 = "";
   String message2 = "";
   bool error = false;
   int module;
+  //String modulearg;
   int out = WebServer.arg("out").toInt();
   bool value = WebServer.arg("value").toInt();
 
-TelnetMsg((WebServer.arg("module"))); // Send Telnet Message
+//  LogMsg((WebServer.arg("module"))); // Send Telnet Message
 
-if (WebServer.arg("module").startsWith("0x"))
-{
-  module = (int) strtol( &(WebServer.arg("module"))[2], NULL, 16);
-}
-else
-{
-  module = WebServer.arg("module").toInt();
-}
+  if (WebServer.arg("module").startsWith("0x"))
+  {
+    module = hexToDec(WebServer.arg("module").substring(2));
+  }
+  else
+  {
+    module = WebServer.arg("module").toInt();
+  }
 
   // Check "module"
   if (GetModuleIndex(module) == 99)
   {
-    message2 += "<h3><font color='red'>Error: Module not found</font></h3>";
+    message2 += "Error: Module not found";
+    message2 += "<br>";
+    message2 += module;
+    message2 += "<br>";
+    message2 += WebServer.arg("module");
     error = true;
   }
   else
   {
-/*    
+/*
     message2 += "Module HEX 0x";
     message2 += String (module, HEX);  
     message2 += " - DEC ";
@@ -250,30 +314,30 @@ else
   out = out-1; // Adjust out to 0-7
   if (out > 7)
   {
-    message2 += "<h3><font color='red'>Error: Variable 'out' is out of range</font></h3>";
+    message2 += "Error: Variable 'out' is out of range";
     error = true;
   }
 
   // Check "value"
   if (!(value >= 0 && value <= 1))
   {
-    message2 += "<h3><font color='red'>Error: Variable value must be 0 or 1</font></h3>";
+    message2 += "Error: Variable value must be 0 or 1";
     error = true;
   }
 
   if (error)
   {
-    message1 += "<h2><font color='red'>Error</font></h2>";
+    message1 += "Error";
   }
   else
   {    
-    message1 += "<h2><font color='green'>OK</font></h2>";
+    message1 += "OK";
     SetOutput(module,out,value);
   }
   delay(5);
   
   page = P_Header_Small() + message1  + message2;
-  WebServer.send(200, "text/html", page);
+  WebServer.send(200, "text/plain", page);
 }
 
 
@@ -308,8 +372,6 @@ void updateOutput()
 
 void SetOutput(int module, int out, bool value)
 {
-  TelnetMsg("SetOutput");
-  
   byte com = readModule(module);
   
   bitWrite(com, out, !value); // Change bit value
@@ -320,9 +382,9 @@ void SetOutput(int module, int out, bool value)
 
   O_Module_VAL[GetModuleIndex(module)][out] = value; // Store value
   
-  TelnetMsg("OUT | 0x" + String(module, HEX) + " | P" + String(out+1) + " | " + (value ? "ON " : "OFF")); // Send Telnet Message
+  LogMsg("SET OUT | 0x" + String(module, HEX) + " | P" + String(out+1) + " | " + (value ? "ON " : "OFF")); // Log Message
 }
-
+  
 ////////////////////////////////////////////////////////////////////////////////////////
 // Function - Get Module Number (for multi array)
 
@@ -350,6 +412,8 @@ void sendUDP(String text)
   UDP.print(text);
   UDP.endPacket();
   delay(5);
+  String logText = "Send UDP Message >" + text + "< to " + LoxoneIP.toString();
+  LogMsg(logText);  // Log Message
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -365,19 +429,19 @@ void receiveUDP()
     // receive incoming UDP packets
     Serial.printf("Received %d bytes from %s, port %d\n", packetSize, UDP.remoteIP().toString().c_str(), UDP.remotePort());
     int len = UDP.read(incomingPacket, 255);
-    TelnetMsg(String(len));
+    LogMsg(String(len));
     if (len > 0)
     {
       incomingPacket[len] = 0;
     }
-    
+
     Serial.printf("UDP packet contents: %s\n", incomingPacket);
 
     String incoming = incomingPacket;
 
     if (incoming == "99999")
     {
-      TelnetMsg("Rebooting...");
+      LogMsg("Rebooting...");
       delay(2000);
       ESP.restart();
     }
@@ -408,7 +472,7 @@ void receiveUDP()
     
     if (error)
     {
-      TelnetMsg("UDP Error");
+      LogMsg("UDP Error");   // Log Message
     }
     else
     {    
@@ -482,11 +546,11 @@ void checkInputs()
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
-// Function - sendChange - Send telnet and UDP message
+// Function - sendChange - Send UDP and log message
 
 void SendChange(int module, int out, bool value)
 {
-  TelnetMsg("IN  | 0x" + String(I_Module_Address[module], HEX) + " | P" + String(out+1) + " | " + (value ? "ON " : "OFF") + " | " + I_Module_DESC[module][out] + " | UDP 020" + String(out+1) + value);
+  LogMsg("IN  | 0x" + String(I_Module_Address[module], HEX) + " | P" + String(out+1) + " | " + (value ? "ON " : "OFF") + " | " + I_Module_DESC[module][out] + " | UDP 020" + String(out+1) + value);   // Log Message
   sendUDP("0" + String(I_Module_Address[module], HEX) + String(out+1) + value);
 }
 
@@ -598,4 +662,36 @@ void I2CScan()
   else {
     Serial.println("Done!");
   }
+  LogMsg("Found " + String(nDevices) + " I2C devices");
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - Telnet Message
+
+void LogMsg(String text)
+{
+  // Status Message  
+  if (loggingEnabled) {
+    if (logPointer == (logLength)) {
+      logPointer = 0;
+    }
+    String logText;
+    logText += millis();
+    logText += "-";
+    logText += text;
+    loggingArray[logPointer] = logText;
+    logPointer++;
+  }
+  
+  // Telnet Message
+  for(int i = 0; i < MAX_TELNET_CLIENTS; i++)
+  {
+    if (TelnetClient[i] || TelnetClient[i].connected())
+    {
+      TelnetClient[i].println(text);
+    }
+  }
+  delay(1);  // to avoid strange characters left in buffer
+
+
 }
