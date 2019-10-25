@@ -4,7 +4,6 @@ I2C WLAN Gateway with ESP8266 and I/O modules from www.Horter-Shop.de
 For further details visit www.nikolaus-lueneburg.de
 
 # Features
-------------------------------------------------
 - Web-GUI
 - HTTP API
 - UDP Send - Input Module
@@ -12,9 +11,9 @@ For further details visit www.nikolaus-lueneburg.de
 - Over the Air Update
 - Telnet Log
 - Interrupt
+- Status page with logging
 
 # Output Module
-------------------------------------------------
 Example: To change output 3 to ON on module with HEX 0x21 or DEC 33
 
 -- HTTP API
@@ -30,7 +29,6 @@ http://<ESP_IP>/set?module=33&out=3&value=1
 Send UDP value ==> 02131
 
 # Input Module
-------------------------------------------------
 Example: Output 2 changes from 0 to 1 on module with HEX 0x20 or DEC 32
 
 -- HTTP API
