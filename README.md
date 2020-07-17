@@ -12,7 +12,7 @@ For further details visit www.nikolaus-lueneburg.de
 - Over the Air Update
 - Telnet Log
 - Interrupt
-- Status page with logging
+- Status page
 
 # Output Module
 Example: To change output 3 to ON on module with HEX 0x21 or DEC 33
