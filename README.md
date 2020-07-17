@@ -30,6 +30,7 @@ http://<ESP_IP>/set?module=33&out=3&value=1
 Send UDP value ==> 02131
 
 -- MQTT
+
 <BASETOPIC>/21/set/1 - on
 
 # Input Module
@@ -44,4 +45,5 @@ Coming soon
 I2CWLANGateway send value ==> 02021
 
 -- MQTT
+
 <BASETOPIC>/20/2 - on
