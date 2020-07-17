@@ -7,29 +7,38 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Sketch
 #define Sketch_Name       "I2C WLAN Gateway - Test"    // Name des Skripts
-#define Sketch_Version    "1.4"                  // Version des Skripts
+#define Sketch_Version    "1.6"                  // Version des Skripts
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Network
 
 // WLAN Configuration
-const char* ssid = "MYSSID";
-const char* password = "WLANSECRET";
+const char* ssid = "<MYSSID>";
+const char* password = "<WLANSECRET>";
 
 // DHCP or Static
 const bool EnableStaticIP = true; // false = DHCP
 
 // ESP8266 IP Configuration
-IPAddress ip(192,168,1,21); // IP-Address Wemos D1
+IPAddress ip(192,168,1,123); // IP-Address Wemos D1
+IPAddress dns(192,168,1,1); // IP-Address DNS
 IPAddress gateway(192,168,1,1); // IP-Address network gateway
 IPAddress subnet(255,255,255,0); // Subnetzmaske
 
-// OTA Settings
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+// OTA settings
 const char* OTAPassword = "1234"; 
 const char* OTAHostname = "ESP-Test";
 
-// Telnet
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Telnet settings
+const bool telnetEnabled = true;
+
 #define MAX_TELNET_CLIENTS 2
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+// UDP settings
+const bool udpEnabled = true;
 
 // UDP packet destination IP & Port
 IPAddress LoxoneIP(192, 168, 1, 5);
@@ -39,6 +48,21 @@ const unsigned int RecipientPort = 12345;
 const unsigned int localUdpPort = 8000;  // local port to listen on
 const bool replyUDP = true;
 const char  replyPacket[] = "OK";  // a reply string to send back
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MQTT
+const bool mqttEnabled = true;
+
+const char* mqttServer = "<Server FQDN>";
+const int mqttPort = 8883;
+
+const char* mqttUser = "<USERNAME>";
+const char* mqttPassword = "<PASSWORD>";
+const char* mqttClientID = "<CLIENTID>";
+
+const char mqttBaseTopic[] = "<BASETOPIC>"; // Example "I2CGW/TEST/"
+const char mqttLWtopic[] = "status";
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Interrupt Pin
@@ -51,8 +75,8 @@ const char  replyPacket[] = "OK";  // a reply string to send back
 // Loxone
 // See function OpenLoxoneURL for further details
 
-const char* LoxoneAuthorization = "YWRtaW46UmljaHRmZXN0"; // Base64 encoded Username and Password
-const char* LoxoneRebootURL = "ESP8266_176"; // Opens the URL after a reboot
+const char* LoxoneAuthorization = "<BASE64STRING>"; // Base64 encoded Username and Password (user:password)
+const char* LoxoneRebootURL = "I2CGW_TEST"; // Opens the URL after a reboot
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // HTML Configuration
