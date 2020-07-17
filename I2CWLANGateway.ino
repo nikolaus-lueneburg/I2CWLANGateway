@@ -1,5 +1,5 @@
 /*
- * Version: 1.4
+ * Version: 1.6
  * Author: Stefan Nikolaus
  * Blog: www.nikolaus-lueneburg.de
  */
@@ -14,31 +14,31 @@
 #include <ArduinoOTA.h>
 #include <ESP8266HTTPClient.h>
 #include <Wire.h>
+#include <MQTT.h> // MQTT library by Joel Gaehwiler included in Arduino builtin Library Manager >> https://github.com/256dpi/arduino-mqtt
 
 #include "configuration.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Settings
 
+// Web-Server
+ESP8266WebServer WebServer(80); // HTTP Port
+
 // Telnet
 WiFiServer TelnetServer(23); // Telnet Port
 WiFiClient TelnetClient[MAX_TELNET_CLIENTS];
 bool ConnectionEstablished; // Flag for telnet
 
-// Web-Server
-ESP8266WebServer WebServer(80); // HTTP Port
-
-// Start UDP
+// UDP
 WiFiUDP UDP;
-
 char incomingPacket[255];  // buffer for incoming packets
 
-// Logging
-String loggingArray[logLength] = {};
-byte logPointer = 0;
+// MQTT
+WiFiClientSecure net;
+MQTTClient client;
+char mqttBuffer[255];  // buffer for mqtt
 
-////////////////////////////////
-
+// I2C
 const int O_Module_NUM = (sizeof(O_Module_Address) / sizeof(O_Module_Address[0]));  // Number of output modules
 int O_Module_VAL[O_Module_NUM][8];   // Flag for output state
 
@@ -57,32 +57,40 @@ byte I_Module_VAL_NEW[I_Module_NUM];  // Flag for input state
 void setup()
 {
   Serial.begin(115200);
-  Serial.println(Sketch_Name);
-  Serial.println(Sketch_Version);
+  Serial.println("");
+  Serial.println(F("###########################################################################"));
+  Serial.print("#  "); Serial.println(Sketch_Name);
+  Serial.print("#  "); Serial.println(Sketch_Version);
 
   Wire.begin();
 
   Serial.printf("Sketch size: %u\n", ESP.getSketchSize());
   Serial.printf("Free size: %u\n", ESP.getFreeSketchSpace());
 
+  //////////////////////////////////////////////////////////////////////////////
+  // Wifi
+  Serial.println(F("Startup - Wifi"));
   WiFi.mode(WIFI_STA);
-  if (EnableStaticIP)
+  
+  if (enableStaticIP)
   {
-    WiFi.config(ip, gateway, subnet);
+    Serial.print(F("Using static IP: ")); Serial.println(ip);
+    WiFi.config(ip, dns, gateway, subnet);
   }
+  
   WiFi.begin(ssid, password);
 
   CheckWifiStatus();
   
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-
-  Serial.println("Starting Telnet server");
-  TelnetServer.begin();
-  TelnetServer.setNoDelay(true);
-
+  if (!enableStaticIP)
+  {
+    Serial.print(F("IP address: "));
+    Serial.println(WiFi.localIP());
+  }
+  
+  //////////////////////////////////////////////////////////////////////////////
   // OTA
-
+  Serial.println(F("Startup - Configure Over The Air service"));
   // Port defaults to 8266
   // ArduinoOTA.setPort(8266);
 
@@ -90,7 +98,7 @@ void setup()
   ArduinoOTA.setHostname(OTAHostname);
 
   ArduinoOTA.setPassword(OTAPassword);
-  
+
   ArduinoOTA.onStart([]() {
     Serial.println("Start");
   });
@@ -104,15 +112,19 @@ void setup()
   });
   ArduinoOTA.onError([](ota_error_t error) {
     Serial.printf("Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    if (error == OTA_AUTH_ERROR) Serial.println(F("Auth Failed"));
+    else if (error == OTA_BEGIN_ERROR) Serial.println(F("Begin Failed"));
+    else if (error == OTA_CONNECT_ERROR) Serial.println(F("Connect Failed"));
+    else if (error == OTA_RECEIVE_ERROR) Serial.println(F("Receive Failed"));
+    else if (error == OTA_END_ERROR) Serial.println(F("End Failed"));
   });
   
   ArduinoOTA.begin();
-  
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Webserver
+
+  // HTTP Request Handler
   WebServer.on("/", httpHandleRoot); // Handle root website
   WebServer.on("/input", httpHandleInput); // Handle Input website
   WebServer.on("/output", httpHandleOutput); // Handle Output website
@@ -121,35 +133,60 @@ void setup()
   WebServer.on("/get", httpHandleGet); // Handle incoming (HTTP GET) get command  
   WebServer.onNotFound(httpHandleNotFound); // When a client requests an unknown URI
 
-  // Start the server
-  Serial.println("Starting WebServer");
+  Serial.println(F("Startup - Webserver"));
   WebServer.begin();
 
-  // Start UDP listener
-  UDP.begin(localUdpPort);
-  Serial.printf("Now listening at IP %s, UDP port %d\n", WiFi.localIP().toString().c_str(), localUdpPort);
+  //////////////////////////////////////////////////////////////////////////////
+  // Telnet
+  if (telnetEnabled) {
+    Serial.println(F("Startup - Telnet server"));
+    TelnetServer.begin();
+    TelnetServer.setNoDelay(true);
+  }
+  else
+  {
+   Serial.println(F("Startup - Telnet server disabled")); 
+  }
+
+  //////////////////////////////////////////////////////////////////////////////
+  // UDP
+  if (udpEnabled) {
+    UDP.begin(localUdpPort);
+    Serial.printf("Start UDP server on port %d\n", localUdpPort);
+  }
+  else
+  {
+    Serial.println("UDP server disabled");
+  }
+  //////////////////////////////////////////////////////////////////////////////
+  // MQTT
+  if (mqttEnabled) {
+    client.begin(mqttServer, mqttPort, net);
+    client.onMessage(messageReceived);
+    connect();
+  }
+  else {
+    Serial.println("MQTT client disabled");
+  }
 
   // sendHTTPGet(LoxoneRebootURL);
 
   pinMode(BUILTIN_LED, OUTPUT);  // initialize onboard LED as output
   pinMode(InterruptPin, INPUT);
-
+  
   if (InterruptPin != D0)
   {
     Serial.println("Attach interrupt to Pin");
     attachInterrupt(digitalPinToInterrupt(InterruptPin), readInputs, RISING);
   }
 
-  // Initial Check of Input Modules
-  Serial.println("Checking Inputs");
-
   I2CScan();
 
+  // Initial update of input and output modules
   readInputs();
-
   updateOutput();
 
-LogMsg("Startup completed");
+  LogMsg("Startup - Completed");
 
 }
 
@@ -159,10 +196,12 @@ LogMsg("Startup completed");
 void loop()
 {
   ArduinoOTA.handle(); // Wait for OTA connection
-  
-  Telnet();  // Handle telnet connections
 
   WebServer.handleClient();    // Handle incoming web requests
+  
+  if (telnetEnabled) {
+    Telnet();  // Handle telnet connections
+  }
 
   // Invokes the "read Input" function if software interrupt is used
   softInterrupt();
@@ -170,9 +209,98 @@ void loop()
   // Checks for changes on the input modules
   checkInputs();
 
-  // looks for new UDP packages
-  receiveUDP();
+  if (udpEnabled) {
+    receiveUDP(); // looks for new UDP packages
+  }
+  // MQTT
+  if (mqttEnabled) {
+    client.loop();
+    if (!client.connected()) {
+      CheckWifiStatus();
+      connect();
+    }
+  }
+}
 
+////////////////////////////////////////////////////////////////////////////////////////
+// Function - MQTT
+
+void connect() {
+
+  CheckWifiStatus();
+
+  // https://github.com/esp8266/Arduino/blob/master/libraries/ESP8266WiFi/examples/BearSSL_Validation/BearSSL_Validation.ino
+  net.setInsecure();
+
+  sprintf(mqttBuffer, "%s%s", mqttBaseTopic, mqttLWtopic);
+
+  client.setWill(mqttBuffer, "offline", true, 0);
+
+  Serial.print("\nconnecting...");
+  while (!client.connect(mqttClientID, mqttUser, mqttPassword)) {
+    Serial.print(".");
+    delay(1000);
+  }
+
+  client.publish(mqttBuffer, "online", true, 0);
+
+  Serial.println("\nconnected!");
+
+  sprintf(mqttBuffer, "%s%s", mqttBaseTopic, "+/set/+");
+
+  client.subscribe(mqttBuffer);
+}
+
+void messageReceived(String &topic, String &payload) {
+  int module;
+  int out;
+  bool error = false;
+
+  int value;
+  
+  LogMsg("INFO - Incoming MQTT message: " + topic + " - " + payload);
+
+  // Remove mqttBaseTopic fron Topic
+  topic.replace(mqttBaseTopic, "");
+
+  if (payload == "1" || payload == "on" || payload == "true") {
+    value = 1;
+  } else if (payload == "0" || payload == "off" || payload == "false") {
+    value = 0;
+  } else {
+    LogMsg("ERROR - Could not convert value");
+    return;
+  }
+  // Extract module
+  module = hexToDec(topic.substring(0, 2));
+  // Extract out
+  out = topic.substring(7 ,8).toInt();
+
+  // Check "module"
+  if (GetModuleIndex(module) == 99)
+  {
+   LogMsg("ERROR - Module not found");
+   return;
+  }
+
+  // Check "out"
+  out = out - 1; // Adjust out to 0-7
+  if (out > 7)
+  {
+    LogMsg("ERROR - Variable 'out' is out of range");
+    return;
+  }
+
+  // Check "value"
+  if (!(value >= 0 && value <= 1))
+  {
+    LogMsg("ERROR - Variable value must be 0 or 1");
+    return;
+  }
+  
+  SetOutput(module,out,value);
+
+  // LogMsg("Module: " + String(module, HEX) + " - Out: " + String(out));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -300,15 +428,14 @@ void httpHandleSet()
     message2 += WebServer.arg("module");
     error = true;
   }
-  else
+/*  else
   {
-/*
     message2 += "Module HEX 0x";
     message2 += String (module, HEX);  
     message2 += " - DEC ";
     message2 += module;
-*/
   }
+*/
 
   // Check "out"
   out = out-1; // Adjust out to 0-7
@@ -347,9 +474,13 @@ void httpHandleSet()
 byte readModule(int module)
 {
   Wire.requestFrom(module, 1);    // Ein Byte (= 8 Bits) vom PCF8574 lesen
-  while(Wire.available() == 0);         // Warten, bis Daten verfügbar 
-  byte value = Wire.read();
-  return value;
+  // while(Wire.available() == 0);         // Warten, bis Daten verfügbar
+  if (Wire.available() == 0) {
+    // LogMsg("Failed to read module: 0x" + String(module));
+  } else {
+    byte value = Wire.read();
+    return value;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -357,6 +488,8 @@ byte readModule(int module)
 
 void updateOutput()
 {
+  LogMsg("Startup - Update Output Modules");
+  
   for (int i = 0; i < O_Module_NUM; i++)
   {
     byte value = readModule(O_Module_Address[i]);
@@ -384,7 +517,7 @@ void SetOutput(int module, int out, bool value)
   
   LogMsg("SET OUT | 0x" + String(module, HEX) + " | P" + String(out+1) + " | " + (value ? "ON " : "OFF")); // Log Message
 }
-  
+
 ////////////////////////////////////////////////////////////////////////////////////////
 // Function - Get Module Number (for multi array)
 
@@ -429,7 +562,7 @@ void receiveUDP()
     // receive incoming UDP packets
     Serial.printf("Received %d bytes from %s, port %d\n", packetSize, UDP.remoteIP().toString().c_str(), UDP.remotePort());
     int len = UDP.read(incomingPacket, 255);
-    LogMsg(String(len));
+    // LogMsg(String(len));
     if (len > 0)
     {
       incomingPacket[len] = 0;
@@ -489,15 +622,6 @@ void receiveUDP()
   }
 }
 
-/*
-int PartOfArray(char text)
-{
-  for (int i = 0 ; i < 5 ; i++) incomingPacket[i] = items[i];
-  test[5] = '\0';
-  
-  return index;
-}
-*/
 ////////////////////////////////////////////////////////////////////////////////////////
 // Function - softInterrupt
 
@@ -505,7 +629,7 @@ void softInterrupt()
 {
   if (InterruptPin == D0)
   {
-    if (digitalRead(InterruptPin) == 0) // Check PIN D0
+    if (digitalRead(InterruptPin) == LOW) // Check PIN D0
     {
       readInputs();
     }
@@ -550,8 +674,18 @@ void checkInputs()
 
 void SendChange(int module, int out, bool value)
 {
-  LogMsg("IN  | 0x" + String(I_Module_Address[module], HEX) + " | P" + String(out+1) + " | " + (value ? "ON " : "OFF") + " | " + I_Module_DESC[module][out] + " | UDP 020" + String(out+1) + value);   // Log Message
-  sendUDP("0" + String(I_Module_Address[module], HEX) + String(out+1) + value);
+  int moduleAddress = I_Module_Address[module];
+  
+  LogMsg("IN  | 0x" + String(moduleAddress, HEX) + " | P" + String(out+1) + " | " + (value ? "ON " : "OFF") + " | " + I_Module_DESC[module][out] + " | UDP 020" + String(out+1) + value);   // Log Message
+  
+  if (mqttEnabled) {
+    sprintf(mqttBuffer, "%s/%x/%d", mqttBaseTopic, moduleAddress, out + 1);
+    client.publish(mqttBuffer, String(value));
+  }
+  
+  if (udpEnabled) {
+    sendUDP("0" + String(moduleAddress, HEX) + String(out+1) + value);  
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -597,20 +731,20 @@ void CheckWifiStatus()
 {
   // ... Give ESP 10 seconds to connect to station.
   unsigned long startTime = millis();
-  Serial.print("Waiting for wireless connection ");
+  Serial.print(F("Waiting for wireless connection "));
   while (WiFi.status() != WL_CONNECTED && millis() - startTime < 10000)
   {
     delay(500);
     Serial.print(".");
-      digitalWrite(D4, 1);
-      delay(50);
-      digitalWrite(D4, 0);
+    digitalWrite(D4, 1);
+    delay(100);
+    digitalWrite(D4, 0);
   }
   Serial.println();
   
   while (WiFi.status() != WL_CONNECTED)
   {
-    Serial.println("Connection Failed! Rebooting...");
+    Serial.println(F("Connection to WiFi failed! Rebooting..."));
     digitalWrite(D4, 1);
     delay(5000);
     ESP.restart();
@@ -625,7 +759,7 @@ void I2CScan()
   byte error, address;
   int nDevices;
 
-  Serial.println("Scanning...");
+  Serial.println(F("Scanning for I2C devices ..."));
 
   nDevices = 0;
   for (address = 1; address < 127; address++)
@@ -638,18 +772,16 @@ void I2CScan()
 
     if (error == 0)
     {
-      Serial.print("I2C device found at address 0x");
+      Serial.print(F("Device found at address 0x"));
       if (address < 16) {
         Serial.print("0");
       }
-      Serial.print(address, HEX);
-      Serial.println(" !");
-
+      Serial.println(address, HEX);
       nDevices++;
     }
     else if (error == 4)
     {
-      Serial.print("Unknown error at address 0x");
+      Serial.print(F("Unknown error at address 0x"));
       if (address < 16) {
         Serial.print("0");
       }
@@ -657,12 +789,9 @@ void I2CScan()
     }
   }
   if (nDevices == 0) {
-    Serial.println("No I2C devices found\n");
+    Serial.println(F("No devices found"));
   }
-  else {
-    Serial.println("Done!");
-  }
-  LogMsg("Found " + String(nDevices) + " I2C devices");
+  LogMsg("Startup - Found " + String(nDevices) + " I2C devices");
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -670,18 +799,9 @@ void I2CScan()
 
 void LogMsg(String text)
 {
-  // Status Message  
-  if (loggingEnabled) {
-    if (logPointer == (logLength)) {
-      logPointer = 0;
-    }
-    String logText;
-    logText += millis();
-    logText += "-";
-    logText += text;
-    loggingArray[logPointer] = logText;
-    logPointer++;
-  }
+  // Serial Message
+  Serial.println(text);
+
   
   // Telnet Message
   for(int i = 0; i < MAX_TELNET_CLIENTS; i++)
