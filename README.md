@@ -19,11 +19,11 @@ Example: To change output 3 to ON on module with HEX 0x21 or DEC 33
 
 ## HTTP API ##
 
-http://<ESP_IP>/set?module=0x21&out=3&value=1
+`http://<ESP_IP>/set?module=0x21&out=3&value=1`
 
 or 
 
-http://<ESP_IP>/set?module=33&out=3&value=1
+`http://<ESP_IP>/set?module=33&out=3&value=1`
 
 ## UDP ##
 
@@ -31,7 +31,7 @@ Send UDP value ==> 02131
 
 ## MQTT ##
 
-<BASETOPIC>/21/set/1 - on
+`<BASETOPIC>/21/set/1 - on`
 
 # Input Module
 Example: Output 2 changes from 0 to 1 on module with HEX 0x20 or DEC 32
@@ -46,4 +46,4 @@ I2CWLANGateway send value ==> 02021
 
 ## MQTT ##
 
-<BASETOPIC>/20/2 - on
+`<BASETOPIC>/20/2 - on`
