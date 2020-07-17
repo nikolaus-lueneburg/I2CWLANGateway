@@ -1,5 +1,5 @@
 /*
- * Version: 1.4
+ * Version: 1.6
  * Author: Stefan Nikolaus
  * Blog: www.nikolaus-lueneburg.de
  */
@@ -172,6 +172,7 @@ String P_Output()
 String P_Status()
 {
   String page = "<!-- Start Status Loop -->";
+
   page +=   "<div class='card shadow mb-4'>";
   page +=   "  <h4 class='card-header'>Wifi</h4>";
   page +=   "  <div class='card-body'>";
@@ -184,55 +185,66 @@ String P_Status()
   page +=         "</p>";  
   page +=   "  </div>";
   page +=   "</div>";
+  
+if (mqttEnabled) {
+  page +=   "<div class='card shadow mb-4'>";
+  page +=   "  <h4 class='card-header'>MQTT</h4>";
+  page +=   "  <div class='card-body'>";
+  page +=   "    <p class='card-text'>";
+  page +=         "Status: ";
+    if (client.connected()) {
+      page +=         "Online";
+    }
+    else {
+      page +=         "Offline";
+    }
+  page +=         "<br>";
+  page +=         "Basetopic: ";
+  page +=         mqttBaseTopic;
+  page +=         "</p>";
+  page +=   "  </div>";
+  page +=   "</div>";
+}
+
+if (udpEnabled) {
+  page +=   "<div class='card shadow mb-4'>";
+  page +=   "  <h4 class='card-header'>UDP</h4>";
+  page +=   "  <div class='card-body'>";
+  page +=   "    <p class='card-text'>";
+  page +=         "Server IP: ";
+  page +=         LoxoneIP.toString();
+  page +=         "<br>";
+  page +=         "Port: ";
+  page +=         RecipientPort;
+  page +=         "</p>";
+  page +=   "  </div>";
+  page +=   "</div>";
+}
 
   page +=   "<div class='card shadow mb-4'>";
   page +=   "  <h4 class='card-header'>System</h4>";
   page +=   "  <div class='card-body'>";
   page +=   "    <p class='card-text'>";
-  page +=      "Sketch size: ";
+  page +=      "<b>Sketch</b><br>";
+  page +=      "Total size: ";
   page +=       ESP.getSketchSize();
+  page +=       " kb";
   page +=       "<br>";  
   page +=       "Free size: ";
   page +=       ESP.getFreeSketchSpace();
+  page +=       " kb";
+  page +=       "<br>";
+  page +=      "<b>Memory</b><br>";
+  page +=       "Free heap: ";
+  page +=       ESP.getFreeHeap();
+  page +=       " kb";
+  page +=       "<br>";  
+  page +=       "Heap fragmentation: ";
+  page +=       ESP.getHeapFragmentation();
+  page +=       "%";
   page +=     "</p>";
   page +=   "  </div>";
   page +=   "</div>";
-  
-//  LogMsg("LOGMSG");
-  
-  if (loggingEnabled) {
-    page +=   "<div class='card shadow mb-4'>";
-    page +=   "  <h4 class='card-header'>Log</h4>";
-    page +=   "  <div class='card-body'>";
-    page +=   "    <p class='card-text'>";
-    for (int i = 0; i < logLength; i++) {
-      byte pointer = logPointer + i + 1;
-
-      if (pointer > logLength) {
-        pointer =  pointer - logLength;
-      }
-
-      page +=     "<div class='row'>";
-      page +=     "  <div class='col col-sm-1 col-md-1 col-lg-1'><h5 class ='text-left'><span class='badge badge-pill badge-secondary mr-2'>";
-      page +=        logLength - i;
-      page +=     "  </span></h5></div>";
-
-
-//    page += logLength - pointer;
-//    page += " - ";
-      page +=     "<div class='col col-sm-6 col-md-6 col-lg-6'>";
-      page += loggingArray[pointer - 1];
-//    page += loggingArray[logLength - pointer];
-      page +=     "</div>";
-      page +=  "</div>";
-//      page += "<br>";
-    }
-    page +=     "</p>";
-    page +=   "  </div>";
-    page +=   "</div>";  
-  }
-
-
 
   page +=         "<!-- End Status Loop -->";
   
